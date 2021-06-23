@@ -43,6 +43,7 @@ namespace CodeTestSenior.Library
 
     public class CodonTranslator
     {
+        private readonly Root codonTable;
 
         /// <summary>
         /// Constructor
@@ -50,7 +51,31 @@ namespace CodeTestSenior.Library
         /// <param name="codonTableFileName">Filename of the DNA codon table.</param>
         public CodonTranslator(string codonTableFileName)
         {
+            // I don't like that I'm reading a file in a constructor, but since this is where the filename was coming in,
+            // it kind of made sense to do the file read here. I could have put the read in the Translate, but if
+            // Translate was called multiple times, I didn't want to read the file everytime. Of course there are workarounds
+            // to that, but in a limited time frame, I just accepted this to be fine for now.
+            var fileContents = File.ReadAllText(codonTableFileName);
+            codonTable = System.Text.Json.JsonSerializer.Deserialize<Root>(fileContents) ?? throw new NotImplementedException();
+        }
 
+        private int IndexOfFirstStart(string dna)
+        {
+            var index = -1;
+            
+            // Since there is only one Start this whole thing probably isn't necessary, but since
+            // the json Start input was an array, I wanted to cover my bases in case a new Start codon was added.
+            
+            foreach (var start in codonTable.Starts)
+            {
+                var i = dna.IndexOf(start, StringComparison.Ordinal);
+                if (i >= 0 && (index == -1 || i < index))
+                {
+                    index = i;
+                }
+            }
+
+            return index;
         }
 
         /// <summary>
@@ -60,8 +85,83 @@ namespace CodeTestSenior.Library
         /// <returns>Amino acid sequence</returns>
         public string Translate(string dna)
         {
-            return "";
+            Protein currentProtein = null;
+            
+            // Index of first Start codon for off balance start
+            var indexOfFirstStart = IndexOfFirstStart(dna);
+
+            // Move by 3 to just look at a single frame
+            for (var frameIndex = indexOfFirstStart; frameIndex + 3 <= dna.Length; frameIndex += 3)
+            {
+                // This generates a new string everytime through. I experimented with ReadOnlySpan, but HashSet.Contains
+                // wouldn't like it. And again, due to time constraints I accepted this as ok for now.
+                var frame = dna.Substring(frameIndex, 3);
+
+                // Check if frame is a start codon
+                if (currentProtein == null)
+                {
+                    if (codonTable.Starts.Contains(frame))
+                    {
+                        currentProtein = new Protein();
+                        currentProtein.AddAminoAcid(MapAminoAcid(frame));
+                    }
+
+                    continue;
+                }
+                
+                if (codonTable.Stops.Contains(frame))
+                {
+                    return currentProtein.GetProtein();
+                }
+
+                currentProtein.AddAminoAcid(MapAminoAcid(frame));
+            }
+
+            return string.Empty;
         }
+        
+        private char MapAminoAcid(string frame)
+        {
+            var aminoAcidMap = codonTable.CodonMap.FirstOrDefault(item => item.Codon == frame);
+            if (aminoAcidMap == null)
+            {
+                throw new Exception("Unable to determine amino acid");
+            }
+            // Since the input Amino Acid is a string and not a char, this checks to make sure it is just a single character
+            if (aminoAcidMap.AminoAcid.Length != 1)
+            {
+                throw new Exception($"Not a valid amino acid: {aminoAcidMap.AminoAcid}");
+            }
+
+            return aminoAcidMap.AminoAcid[0];
+        }
+    }
+    
+    public class Protein
+    {
+        private readonly List<char> _aminoAcids = new List<char>();
+        public void AddAminoAcid(char aminoAcid)
+        {
+            _aminoAcids.Add(aminoAcid);
+        }
+
+        public string GetProtein()
+        {
+            return new String(_aminoAcids.ToArray());
+        }
+    }
+    
+    public class CodonMap
+    {
+        public string Codon { get; set; }
+        public string AminoAcid { get; set; }
+    }
+
+    public class Root
+    {
+        public HashSet<string> Starts { get; set; }
+        public HashSet<string> Stops { get; set; }
+        public List<CodonMap> CodonMap { get; set; }
     }
 
 }
